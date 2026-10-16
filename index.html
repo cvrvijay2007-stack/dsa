@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MST Visualizer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M6 8L16 24L26 10' stroke='%230E7C6B' stroke-width='3.5' stroke-linecap='round' fill='none'/%3E%3Ccircle cx='6' cy='8' r='4' fill='%2315233B'/%3E%3Ccircle cx='16' cy='24' r='4' fill='%2315233B'/%3E%3Ccircle cx='26' cy='10' r='4' fill='%2315233B'/%3E%3C/svg%3E">
+  <script>
+    // Apply saved theme before first paint.
+    (function () {
+      let t = null;
+      try { t = localStorage.getItem('theme'); } catch (e) {}
+      const dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.classList.toggle('dark', dark);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="min-h-screen font-sans">
+  <a href="#canvas" class="skip">Skip to graph</a>
+
+  <header class="mx-auto max-w-[1320px] px-4 sm:px-6 pt-6 pb-4 flex flex-wrap items-end justify-between gap-4">
+    <div class="max-w-2xl">
+      <h1 class="font-display text-[28px] sm:text-[34px] leading-[1.05] font-800 tracking-[-0.02em]">Minimum spanning tree</h1>
+      <div class="algo mt-3" role="radiogroup" aria-label="Algorithm">
+        <button role="radio" data-algo="prim" aria-checked="true">Prim's</button>
+        <button role="radio" data-algo="kruskal" aria-checked="false">Kruskal's</button>
+      </div>
+      <p id="algo-desc" class="mt-3 text-[15px] text-muted">Start at one node. Keep taking the cheapest edge that reaches a node outside the tree, until every node is connected.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="api" class="api-pill" role="status" aria-live="polite"><i></i><span>Connecting</span></span>
+      <button id="theme" class="icon-btn" aria-label="Switch to dark theme" title="Toggle theme">
+        <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-[1320px] px-4 sm:px-6 pb-12 grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px] items-start">
+    <!-- Stage: canvas + transport -->
+    <section class="sheet" aria-label="Graph editor">
+      <div class="toolbar">
+        <div class="seg" role="group" aria-label="Load a graph">
+          <button id="samp" class="tool">Sample</button>
+          <button id="rand" class="tool">Random</button>
+          <label class="tool tool-input" title="Number of nodes for a random graph">
+            <span class="sr-only">Random graph size</span>
+            <input id="rn" type="number" min="2" max="30" value="8" aria-label="Random graph node count">
+            <span class="text-muted">nodes</span>
+          </label>
+        </div>
+        <label class="tool tool-input" title="Weight given to new edges you draw. Leave blank for random.">
+          <span class="text-muted">New edge weight</span>
+          <input id="w" type="number" min="1" max="9999" placeholder="random" aria-label="Weight for new edges">
+        </label>
+        <span class="flex-1"></span>
+        <button id="clr" class="tool">Clear</button>
+        <button id="save" class="tool tool-strong">Save graph</button>
+      </div>
+
+      <div class="relative" id="canvas">
+        <svg id="svg" viewBox="0 0 800 500" role="img" aria-label="Graph canvas. Click to add nodes." class="block w-full select-none touch-none">
+          <defs>
+            <pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse">
+              <circle cx="12.5" cy="12.5" r="1.1" class="grid-dot"/>
+            </pattern>
+          </defs>
+          <rect width="800" height="500" fill="url(#grid)"/>
+          <g id="layer"></g>
+        </svg>
+        <div id="empty" class="empty" hidden>
+          <p class="font-display text-xl font-700">An empty map</p>
+          <p class="text-muted text-sm mt-1">Click anywhere to place a node, or load the sample graph.</p>
+        </div>
+        <input id="we" type="number" min="1" max="9999" aria-label="Edit edge weight" class="weight-edit" hidden>
+      </div>
+
+      <div class="legend" aria-label="Legend">
+        <span id="leg-cand"><i class="sw sw-cand"></i>Frontier edge</span>
+        <span><i class="sw sw-pick"></i><span id="leg-pick">Cheapest, chosen next</span></span>
+        <span><i class="sw sw-mst"></i>In the tree</span>
+        <span><i class="sw sw-ign"></i>Skipped, would form a cycle</span>
+      </div>
+
+      <div class="dock" role="group" aria-label="Playback">
+        <label id="start-wrap" class="flex items-center gap-2 text-sm">
+          <span class="text-muted">Start at</span>
+          <select id="start" class="select" aria-label="Start node"></select>
+        </label>
+        <div class="transport">
+          <button id="back" class="round" aria-label="Step back" title="Step back (←)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14M18 6l-8 6 8 6z"/></svg></button>
+          <button id="play" class="round round-main" aria-label="Play" title="Play / pause (Space)">
+            <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg>
+            <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button>
+          <button id="step" class="round" aria-label="Step forward" title="Step forward (→)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 5v14M6 6l8 6-8 6z"/></svg></button>
+          <button id="reset" class="round" aria-label="Reset" title="Reset (R)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg></button>
+        </div>
+        <div class="scrub">
+          <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Jump to step">
+          <span id="prog" class="text-xs text-muted tabular-nums whitespace-nowrap"></span>
+        </div>
+        <label class="flex items-center gap-2 text-sm">
+          <span class="text-muted">Speed</span>
+          <input id="spd" type="range" min="1" max="10" value="5" class="speed" aria-label="Playback speed">
+        </label>
+      </div>
+    </section>
+
+    <!-- Narration column -->
+    <aside class="column" aria-label="Algorithm state">
+      <section class="narration" aria-live="polite">
+        <p id="phase" class="phase">Ready</p>
+        <p id="status" class="font-display status">Build or load a graph, then press play.</p>
+        <dl class="stats">
+          <div><dt>Tree weight</dt><dd id="tot" class="font-display">0</dd></div>
+          <div><dt id="joined-label">Nodes joined</dt><dd id="joined" class="font-display">0</dd></div>
+          <div><dt>Edges kept</dt><dd id="kept" class="font-display">0</dd></div>
+        </dl>
+      </section>
+
+      <section class="block">
+        <h2 id="queue-title" class="block-title">Frontier edges</h2>
+        <p id="queue-desc" class="text-[13px] text-muted mb-3">Every edge with one end in the tree and one end outside, cheapest first.</p>
+        <ul id="tb" class="bars" aria-labelledby="queue-title"></ul>
+      </section>
+
+      <section class="block">
+        <div class="tabs" role="tablist" aria-label="Details">
+          <button role="tab" id="tab-steps" aria-controls="pane-steps" aria-selected="true" class="tab">Steps</button>
+          <button role="tab" id="tab-list" aria-controls="pane-list" aria-selected="false" class="tab">Edge list</button>
+          <button role="tab" id="tab-saved" aria-controls="pane-saved" aria-selected="false" class="tab">Saved <span id="saved-count" class="count"></span></button>
+        </div>
+
+        <div id="pane-steps" role="tabpanel" aria-labelledby="tab-steps" class="pane">
+          <ol id="log" class="timeline"></ol>
+        </div>
+
+        <div id="pane-list" role="tabpanel" aria-labelledby="tab-list" class="pane" hidden>
+          <p class="text-[13px] text-muted mb-2">One edge per line: two node names and a weight, like <code>A B 4</code>. A name on its own adds a lone node.</p>
+          <textarea id="el" rows="9" spellcheck="false" aria-label="Edge list" class="editor"></textarea>
+          <button id="build" class="primary w-full mt-3">Build graph from list</button>
+        </div>
+
+        <div id="pane-saved" role="tabpanel" aria-labelledby="tab-saved" class="pane" hidden>
+          <p id="dirty" class="text-[13px] mb-2"></p>
+          <ul id="saved" class="saved"></ul>
+        </div>
+      </section>
+
+      <p class="keys">Keys: <kbd>Space</kbd> play or pause, <kbd>←</kbd> <kbd>→</kbd> step, <kbd>R</kbd> reset.</p>
+    </aside>
+  </main>
+
+  <dialog id="saveDlg" class="dlg" aria-labelledby="saveTitle">
+    <form method="dialog" id="saveForm">
+      <h2 id="saveTitle" class="font-display text-xl font-700">Save graph</h2>
+      <label class="block mt-4 text-sm">
+        <span class="text-muted">Name</span>
+        <input id="saveName" maxlength="80" required class="field mt-1 w-full" autocomplete="off">
+      </label>
+      <p id="saveHint" class="text-[13px] text-muted mt-2"></p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button value="cancel" formnovalidate class="tool">Cancel</button>
+        <button value="save" id="saveOk" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirmDlg" class="dlg" aria-labelledby="confirmTitle">
+    <form method="dialog">
+      <h2 id="confirmTitle" class="font-display text-xl font-700">Delete saved graph?</h2>
+      <p id="confirmText" class="text-sm text-muted mt-2"></p>
+      <div class="flex justify-end gap-2 mt-5">
+        <button value="cancel" class="tool">Keep it</button>
+        <button value="delete" id="confirmOk" class="danger">Delete</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
